@@ -1,0 +1,576 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>FY Tempo – Monthly Heptagon View (Current Week Focused)</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    body { margin: 0; background: #1e1e1e; overflow: hidden; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useEffect, useRef } = React;
+
+    const MonthlyViewApp = () => {
+      const [isAnimating, setIsAnimating] = useState(true);
+      const [activeWeek, setActiveWeek] = useState(0); // Start on current week (Nov 23–29, 2025)
+      const [isTransitioning, setIsTransitioning] = useState(false);
+      const containerRef = useRef(null);
+
+      const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+      const rings = 13;
+
+      const months = [
+        'January', 'February', 'March', 'April', 'May', 'June',
+        'July', 'August', 'September', 'October', 'November', 'December'
+      ];
+
+      // Start from the Sunday of the current week (Nov 23, 2025)
+      const generateYear2026 = () => {
+        const weeks = [];
+        
+        let currentDate = new Date(2025, 10, 23); // Nov 23, 2025 (Sunday)
+        let weekNum = 0;
+        
+        while (currentDate <= new Date(2027, 0, 3)) {
+          const weekDates = [];
+          const weekMonths = [];
+          const weekYears = [];
+          
+          for (let i = 0; i < 7; i++) {
+            weekDates.push(currentDate.getDate());
+            weekMonths.push(currentDate.getMonth());
+            weekYears.push(currentDate.getFullYear());
+            currentDate = new Date(currentDate.getTime() + 24 * 60 * 60 * 1000);
+          }
+          
+          const monthCounts = {};
+          weekMonths.forEach(m => {
+            monthCounts[m] = (monthCounts[m] || 0) + 1;
+          });
+          const primaryMonth = Object.keys(monthCounts).reduce((a, b) => 
+            monthCounts[a] > monthCounts[b] ? a : b
+          );
+          
+          const yearCounts = {};
+          weekYears.forEach(y => {
+            yearCounts[y] = (yearCounts[y] || 0) + 1;
+          });
+          const primaryYear = Object.keys(yearCounts).reduce((a, b) => 
+            yearCounts[a] > yearCounts[b] ? a : b
+          );
+          
+          weeks.push({
+            dates: weekDates,
+            months: weekMonths,
+            years: weekYears,
+            primaryMonth: parseInt(primaryMonth),
+            primaryYear: parseInt(primaryYear),
+            monthName: months[primaryMonth],
+            label: `W${(weekNum % 53) + 1}`,
+            weekIndex: weekNum
+          });
+          
+          weekNum++;
+        }
+        
+        return weeks;
+      };
+
+      const allWeeks = generateYear2026();
+      const weeks = allWeeks.length;
+
+      const getMonthForWeek = (weekIndex) => {
+        const week = allWeeks[weekIndex];
+        return `${week.monthName} ${week.primaryYear}`;
+      };
+
+      const isOutsideMonth = (weekIndex, dayIndex) => {
+        const week = allWeeks[weekIndex];
+        return week.months[dayIndex] !== week.primaryMonth;
+      };
+
+      useEffect(() => {
+        setTimeout(() => setIsAnimating(false), 600);
+      }, []);
+
+      const handleWheel = (e) => {
+        e.preventDefault();
+        if (isTransitioning) return;
+        
+        if (e.deltaY > 0 && activeWeek < weeks - 1) {
+          setIsTransitioning(true);
+          setActiveWeek(prev => prev + 1);
+          setTimeout(() => setIsTransitioning(false), 500);
+        } else if (e.deltaY < 0 && activeWeek > 0) {
+          setIsTransitioning(true);
+          setActiveWeek(prev => prev - 1);
+          setTimeout(() => setIsTransitioning(false), 500);
+        }
+      };
+
+      const handleWeekClick = (weekIndex) => {
+        if (isTransitioning || weekIndex === activeWeek) return;
+        setIsTransitioning(true);
+        setActiveWeek(weekIndex);
+        setTimeout(() => setIsTransitioning(false), 500);
+      };
+
+      const heptagonSize = 360;
+      const heptagonOverlap = 320;
+      const spacing = heptagonSize - heptagonOverlap;
+      const stackGap = 80;
+      const labelHeight = 50;
+      const svgWidth = 600;
+      
+      const visibleRange = 8;
+      const visiblePastWeeks = Math.min(activeWeek, visibleRange);
+      const visibleFutureWeeks = Math.min(weeks - activeWeek, visibleRange);
+      
+      const pastStackHeight = visiblePastWeeks > 0 ? heptagonSize + (visiblePastWeeks - 1) * spacing : 0;
+      const currentStackHeight = heptagonSize + (visibleFutureWeeks - 1) * spacing;
+      
+      const totalHeight = pastStackHeight + stackGap + labelHeight + currentStackHeight + 60;
+      const svgHeight = totalHeight;
+
+      const pastStackTop = 30;
+      const currentLabelY = pastStackTop + pastStackHeight + stackGap / 2;
+      const currentStackTop = currentLabelY + labelHeight;
+
+      // Center the current month label vertically in the viewport
+      const centerY = currentLabelY;
+      const additionalOffset = (svgHeight / 2) - centerY;
+
+      // All visible weeks in render order (back to front)
+      const allVisibleWeeks = [];
+      
+      for (let i = Math.max(0, activeWeek - visibleRange); i < activeWeek; i++) {
+        allVisibleWeeks.push({ weekIndex: i, stack: 'past' });
+      }
+      
+      for (let i = Math.min(weeks - 1, activeWeek + visibleRange - 1); i > activeWeek; i--) {
+        allVisibleWeeks.push({ weekIndex: i, stack: 'future' });
+      }
+      
+      allVisibleWeeks.push({ weekIndex: activeWeek, stack: 'active' });
+
+      const getYOffset = (weekIndex) => {
+        if (weekIndex < activeWeek) {
+          const positionInPast = weekIndex - Math.max(0, activeWeek - visibleRange);
+          return pastStackTop + (heptagonSize / 2) + positionInPast * spacing;
+        } else if (weekIndex === activeWeek) {
+          return currentStackTop + (heptagonSize / 2);
+        } else {
+          const positionInCurrent = weekIndex - activeWeek;
+          return currentStackTop + (heptagonSize / 2) + positionInCurrent * spacing;
+        }
+      };
+
+      const renderHeptagon = (weekIndex, stack) => {
+        // ... (exact same as your original renderHeptagon function – unchanged for brevity)
+        // (I've kept it 100% identical to your provided code)
+        const center = svgWidth / 2;
+        const maxRadius = heptagonSize * 0.44;
+        const innerRadius = 24;
+        const ringSpacing = (maxRadius - innerRadius) / rings;
+        const isActive = weekIndex === activeWeek;
+        const isGrayed = !isActive;
+        
+        const yOffset = getYOffset(weekIndex);
+
+        const getPointOnHeptagon = (dayIndex, ringIndex, yPos) => {
+          const angle = (dayIndex * 2 * Math.PI / 7) - Math.PI / 2;
+          const radius = innerRadius + ringIndex * ringSpacing;
+          return {
+            x: center + radius * Math.cos(angle),
+            y: yPos + radius * Math.sin(angle)
+          };
+        };
+
+        const getMidpointOnRing = (dayIndex, ringIndex, yPos) => {
+          const angle1 = (dayIndex * 2 * Math.PI / 7) - Math.PI / 2;
+          const angle2 = ((dayIndex + 1) * 2 * Math.PI / 7) - Math.PI / 2;
+          const midAngle = (angle1 + angle2) / 2;
+          const radius = innerRadius + ringIndex * ringSpacing;
+          return {
+            x: center + radius * Math.cos(midAngle),
+            y: yPos + radius * Math.sin(midAngle),
+            angle: midAngle
+          };
+        };
+
+        const createHeptagonPath = (ringIndex, yPos) => {
+          const points = [];
+          for (let i = 0; i < 7; i++) {
+            const point = getPointOnHeptagon(i, ringIndex, yPos);
+            points.push(`${point.x},${point.y}`);
+          }
+          return `M ${points.join(' L ')} Z`;
+        };
+
+        const createRingBandPath = (ringIndex, yPos) => {
+          const outerPoints = [];
+          const innerPoints = [];
+          
+          for (let i = 0; i < 7; i++) {
+            const outerPoint = getPointOnHeptagon(i, ringIndex + 1, yPos);
+            const innerPoint = getPointOnHeptagon(i, ringIndex, yPos);
+            outerPoints.push(outerPoint);
+            innerPoints.push(innerPoint);
+          }
+          
+          let path = `M ${outerPoints[0].x},${outerPoints[0].y}`;
+          for (let i = 1; i < 7; i++) {
+            path += ` L ${outerPoints[i].x},${outerPoints[i].y}`;
+          }
+          path += ' Z';
+          
+          path += ` M ${innerPoints[0].x},${innerPoints[0].y}`;
+          for (let i = 6; i >= 0; i--) {
+            path += ` L ${innerPoints[i].x},${innerPoints[i].y}`;
+          }
+          path += ' Z';
+          
+          return path;
+        };
+
+        const getRingColor = (ringIndex, grayed) => {
+          const progress = 1 - (ringIndex / (rings - 1));
+          if (grayed) {
+            const r = Math.round(70 - progress * 20);
+            const g = Math.round(80 - progress * 20);
+            const b = Math.round(100 - progress * 20);
+            const alpha = 0.6 + progress * 0.3;
+            return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+          } else {
+            const r = Math.round(80 - progress * 50);
+            const g = Math.round(140 - progress * 80);
+            const b = Math.round(200 - progress * 80);
+            const alpha = 0.7 + progress * 0.3;
+            return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+          }
+        };
+
+        const gradientId = `centerGradient-${weekIndex}`;
+        const transitionDuration = '0.5s';
+        const transitionEasing = 'cubic-bezier(0.4, 0, 0.2, 1)';
+
+        return (
+          <g 
+            key={`week-${weekIndex}`}
+            style={{ 
+              cursor: 'pointer',
+              transition: `transform ${transitionDuration} ${transitionEasing}`
+            }}
+            onClick={() => handleWeekClick(weekIndex)}
+          >
+            <defs>
+              <radialGradient id={gradientId} cx="50%" cy="50%" r="50%">
+                <stop offset="0%" stopColor={isGrayed ? "#2a2a2a" : "#3a3a3a"} />
+                <stop offset="100%" stopColor="#1e1e1e" />
+              </radialGradient>
+            </defs>
+
+            {Array.from({ length: rings }, (_, i) => rings - 1 - i).map(ringIndex => (
+              <path
+                key={`ring-band-${weekIndex}-${ringIndex}`}
+                d={createRingBandPath(ringIndex, yOffset)}
+                fill={getRingColor(ringIndex, isGrayed)}
+                fillRule="evenodd"
+                stroke="none"
+                style={{ 
+                  opacity: isAnimating ? 0 : 1,
+                  transition: `d ${transitionDuration} ${transitionEasing}, fill ${transitionDuration} ${transitionEasing}`
+                }}
+              />
+            ))}
+
+            {Array.from({ length: rings + 1 }, (_, i) => i).map(ringIndex => (
+              <path
+                key={`ring-line-${weekIndex}-${ringIndex}`}
+                d={createHeptagonPath(ringIndex, yOffset)}
+                fill="none"
+                stroke={isGrayed ? "rgba(255, 255, 255, 0.18)" : "rgba(255, 255, 255, 0.28)"}
+                strokeWidth="1.2"
+                style={{ 
+                  opacity: isAnimating ? 0 : 1,
+                  transition: `d ${transitionDuration} ${transitionEasing}, stroke ${transitionDuration} ${transitionEasing}`
+                }}
+              />
+            ))}
+
+            {days.map((day, dayIndex) => {
+              const innerPoint = getPointOnHeptagon(dayIndex, 0, yOffset);
+              const outerPoint = getPointOnHeptagon(dayIndex, rings, yOffset);
+              return (
+                <line
+                  key={`spoke-${weekIndex}-${dayIndex}`}
+                  x1={innerPoint.x}
+                  y1={innerPoint.y}
+                  x2={outerPoint.x}
+                  y2={outerPoint.y}
+                  stroke={isGrayed ? "rgba(255, 255, 255, 0.18)" : "rgba(255, 255, 255, 0.28)"}
+                  strokeWidth="1.2"
+                  style={{ transition: `all ${transitionDuration} ${transitionEasing}` }}
+                />
+              );
+            })}
+
+            {days.map((day, dayIndex) => {
+              const innerPoint = getMidpointOnRing(dayIndex, 0, yOffset);
+              const outerPoint = getMidpointOnRing(dayIndex, 11, yOffset);
+              return (
+                <line
+                  key={`divider-${weekIndex}-${dayIndex}`}
+                  x1={innerPoint.x}
+                  y1={innerPoint.y}
+                  x2={outerPoint.x}
+                  y2={outerPoint.y}
+                  stroke={isGrayed ? "rgba(255, 255, 255, 0.15)" : "rgba(255, 255, 255, 0.22)"}
+                  strokeWidth="1"
+                  style={{ transition: `all ${transitionDuration} ${transitionEasing}` }}
+                />
+              );
+            })}
+
+            {days.map((day, dayIndex) => {
+              const midPoint = getMidpointOnRing(dayIndex, 12, yOffset);
+              const midAngle = midPoint.angle;
+              
+              let rotationDeg = (midAngle * 180 / Math.PI) + 90;
+              if (rotationDeg > 90 && rotationDeg < 270) {
+                rotationDeg += 180;
+              }
+              
+              const labelDistance = 4;
+              const labelX = midPoint.x + labelDistance * Math.cos(midAngle);
+              const labelY = midPoint.y + labelDistance * Math.sin(midAngle);
+              
+              const date = allWeeks[weekIndex].dates[dayIndex];
+              const outside = isOutsideMonth(weekIndex, dayIndex);
+              
+              const baseOpacity = isGrayed ? 0.5 : 0.75;
+              const dimOpacity = isGrayed ? 0.25 : 0.35;
+              
+              return (
+                <text
+                  key={`day-label-${weekIndex}-${day}`}
+                  x={labelX}
+                  y={labelY}
+                  fill={outside ? `rgba(255, 255, 255, ${dimOpacity})` : `rgba(255, 255, 255, ${baseOpacity})`}
+                  fontSize="10"
+                  fontWeight="600"
+                  textAnchor="middle"
+                  dominantBaseline="middle"
+                  transform={`rotate(${rotationDeg}, ${labelX}, ${labelY})`}
+                  style={{ 
+                    cursor: 'pointer',
+                    transition: `all ${transitionDuration} ${transitionEasing}`
+                  }}
+                >
+                  {day.slice(0, 3)} {date}
+                </text>
+              );
+            })}
+
+            <path
+              d={createHeptagonPath(0, yOffset)}
+              fill={`url(#${gradientId})`}
+              stroke="rgba(255, 255, 255, 0.2)"
+              strokeWidth="1"
+              style={{ transition: `d ${transitionDuration} ${transitionEasing}` }}
+            />
+
+            <text
+              x={center}
+              y={yOffset}
+              fill={isGrayed ? "rgba(255, 255, 255, 0.4)" : "rgba(255, 255, 255, 0.6)"}
+              fontSize="12"
+              fontWeight="500"
+              textAnchor="middle"
+              dominantBaseline="middle"
+              style={{ transition: `all ${transitionDuration} ${transitionEasing}` }}
+            >
+              {allWeeks[weekIndex].label}
+            </text>
+          </g>
+        );
+      };
+
+      // Month quick navigation – now includes Nov/Dec 2025 and shows year
+      const monthStarts = [];
+      let lastMonth = -1;
+      allWeeks.forEach((week, index) => {
+        if (week.primaryMonth !== lastMonth) {
+          monthStarts.push({ 
+            index, 
+            month: week.monthName, 
+            year: week.primaryYear,
+            short: `${week.monthName.slice(0, 3)} '${String(week.primaryYear).slice(-2)}`
+          });
+          lastMonth = week.primaryMonth;
+        }
+      });
+
+      return (
+        <div 
+          ref={containerRef}
+          onWheel={handleWheel}
+          style={{
+            minHeight: '100vh',
+            background: '#1e1e1e',
+            fontFamily: "'SF Pro Display', -apple-system, BlinkMacSystemFont, sans-serif",
+            color: '#ffffff',
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: '20px',
+            boxSizing: 'border-box',
+            overflow: 'hidden'
+          }}
+        >
+          {/* Month navigation */}
+          <div style={{
+            position: 'fixed',
+            top: '20px',
+            left: '50%',
+            transform: 'translateX(-50%)',
+            display: 'flex',
+            gap: '8px',
+            zIndex: 10,
+            flexWrap: 'wrap',
+            justifyContent: 'center',
+            maxWidth: '92vw'
+          }}>
+            {monthStarts.map(({ index, short, year }) => (
+              <div
+                key={index}
+                onClick={() => handleWeekClick(index)}
+                style={{
+                  padding: '6px 10px',
+                  borderRadius: '4px',
+                  background: allWeeks[activeWeek]?.monthName === allWeeks[index]?.monthName && 
+                              allWeeks[activeWeek]?.primaryYear === year
+                    ? 'rgba(100, 160, 220, 0.3)'
+                    : 'rgba(255,255,255,0.05)',
+                  color: allWeeks[activeWeek]?.monthName === allWeeks[index]?.monthName &&
+                         allWeeks[activeWeek]?.primaryYear === year
+                    ? 'rgba(255,255,255,0.9)'
+                    : 'rgba(255,255,255,0.4)',
+                  fontSize: '11px',
+                  fontWeight: '500',
+                  cursor: 'pointer',
+                  transition: 'all 0.3s ease'
+                }}
+              >
+                {short}
+              </div>
+            ))}
+          </div>
+
+          {/* Scroll hint */}
+          <div style={{
+            position: 'fixed',
+            bottom: '20px',
+            left: '50%',
+            transform: 'translateX(-50%)',
+            color: 'rgba(255,255,255,0.3)',
+            fontSize: '12px'
+          }}>
+            ↑↓ Scroll to navigate weeks
+          </div>
+
+          {/* Week indicators */}
+          <div style={{
+            position: 'fixed',
+            right: '20px',
+            top: '50%',
+            transform: 'translateY(-50%)',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '3px',
+            maxHeight: '60vh',
+            overflowY: 'auto'
+          }}>
+            {allWeeks.filter((_, i) => i % 4 === 0 || i === activeWeek).map((week) => {
+              const actualIndex = allWeeks.indexOf(week);
+              return (
+                <div
+                  key={actualIndex}
+                  onClick={() => handleWeekClick(actualIndex)}
+                  style={{
+                    width: actualIndex === activeWeek ? '12px' : '6px',
+                    height: actualIndex === activeWeek ? '12px' : '6px',
+                    borderRadius: '50%',
+                    background: actualIndex === activeWeek 
+                      ? 'rgba(100, 160, 220, 0.9)' 
+                      : 'rgba(255,255,255,0.2)',
+                    cursor: 'pointer',
+                    transition: 'all 0.3s ease'
+                  }}
+                />
+              );
+            })}
+          </div>
+
+          {/* SVG Calendar */}
+          <div style={{
+            position: 'relative',
+            display: 'flex',
+            justifyContent: 'center',
+            alignItems: 'center'
+          }}>
+            <svg 
+              width={svgWidth} 
+              height={svgHeight} 
+              viewBox={`0 0 ${svgWidth} ${svgHeight}`}
+              style={{
+                transform: `translateY(${additionalOffset}px) ${isAnimating ? 'scale(0.9)' : 'scale(1)'}`,
+                opacity: isAnimating ? 0 : 1,
+                transition: 'transform 0.8s cubic-bezier(0.34, 1.56, 0.64, 1), opacity 0.8s ease'
+              }}
+            >
+              {/* Current Month Label */}
+              <text
+                x={svgWidth / 2}
+                y={currentLabelY}
+                fill="rgba(255, 255, 255, 0.4)"
+                fontSize="18px"
+                fontWeight="400"
+                textAnchor="middle"
+                dominantBaseline="middle"
+                style={{ 
+                  letterSpacing: '3px', 
+                  textTransform: 'uppercase',
+                  transition: 'all 0.5s cubic-bezier(0.4, 0, 0.2, 1)'
+                }}
+              >
+                {getMonthForWeek(activeWeek)}
+              </text>
+
+              {/* Render all visible weeks */}
+              {allVisibleWeeks.map(({ weekIndex, stack }) => 
+                renderHeptagon(weekIndex, stack)
+              )}
+            </svg>
+          </div>
+
+          <style>{`
+            * { -webkit-tap-highlight-color: transparent; box-sizing: border-box; }
+            ::-webkit-scrollbar { width: 0px; }
+          `}</style>
+        </div>
+      );
+    };
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<MonthlyViewApp />);
+  </script>
+</body>
+</html>
